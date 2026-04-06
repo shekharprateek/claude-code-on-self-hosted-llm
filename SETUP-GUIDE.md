@@ -1,64 +1,68 @@
-# Running Claude Code with a Self-Hosted LLM on AWS
+# Running Claude Code with a Self-Hosted LLM (Advanced: llama.cpp)
 
-A practical guide to setting up Claude Code backed by Qwen 3.5-35B running on an AWS g6e instance,
-with lessons learned from doing it the first time.
+A practical guide to setting up Claude Code backed by Qwen 3.5-35B using llama.cpp on
+any NVIDIA GPU server. llama.cpp gives you full control over quantization, context length,
+caching, and inference flags.
+
+> **Looking for the simpler setup?** The Quick Start in the README uses Ollama and takes
+> about 10 minutes. This guide covers llama.cpp for users who want lower-level tuning.
+
+The examples below use Ubuntu, but the steps work on any Linux distribution.
 
 ---
 
 ## What This Achieves
 
 Claude Code (the CLI) normally calls Anthropic's API or Amazon Bedrock. This setup replaces
-that backend with a self-hosted open-weight model (Qwen 3.5-35B) running on an AWS GPU instance.
-The end result: full Claude Code agentic workflows — file edits, bash commands, multi-step
-reasoning — powered by a model you control, at a fixed hourly cost.
+that backend with a self-hosted open-weight model (Qwen 3.5-35B) running on a GPU server
+you control. The end result: full Claude Code agentic workflows — file edits, bash commands,
+multi-step reasoning — powered by a model that never leaves your infrastructure.
 
 ```
-Your Machine (Mac/Linux)
-  │ SSH tunnel (localhost:8131 → g6e:8131)
+Your Laptop or Desktop
+  │ SSH tunnel (localhost:8131 → server:8131)
   ▼
-EC2 GPU Server (g6e.xlarge)
+GPU Server (any cloud or on-premise)
   llama-server + Qwen 3.5-35B
-  NVIDIA L40S, 45GB VRAM
+  NVIDIA GPU, 24GB+ VRAM
 ```
-
-Claude Code runs locally on your machine. The SSH tunnel forwards requests transparently
-to the model server on the GPU instance. No API keys. No cloud routing.
 
 ---
 
 ## Hardware Requirements
 
-| Component | Minimum | Used in this guide |
+| Component | Minimum | Recommended |
 |---|---|---|
-| Instance | Any NVIDIA GPU instance | g6e.xlarge |
-| GPU | NVIDIA GPU with 24GB+ VRAM | L40S (45GB VRAM) |
-| Disk | 50 GB | 100 GB gp3 |
-| AMI | Deep Learning Base OSS Nvidia (Ubuntu 22.04) | ami-014135eb43056a305 |
-
-> The Deep Learning AMI comes with NVIDIA drivers and CUDA pre-installed — no manual driver setup needed.
+| GPU | 24GB VRAM (7B–13B models) | 45GB VRAM (35B models) |
+| Disk | 50 GB | 100 GB SSD |
+| RAM | 16 GB | 32 GB |
+| OS | Ubuntu 20.04+ | Ubuntu 22.04 LTS |
 
 **Your local machine** just needs Claude Code and SSH — no GPU required.
 
+### GPU options by size
+
+| Provider | Instance | GPU | VRAM | Approx. Cost |
+|---|---|---|---|---|
+| AWS | g6e.xlarge | L40S | 45 GB | ~$1.86/hr |
+| AWS | g5.xlarge | A10G | 24 GB | ~$1.01/hr |
+| RunPod | A40 | A40 | 48 GB | ~$0.44/hr |
+| Lambda Labs | 1x A100 | A100 | 40 GB | ~$1.10/hr |
+| Local | Any | Any 24GB+ | — | Hardware cost |
+
 ---
 
-## Step 1 — Launch the GPU Server
+## Step 1 — Get a GPU Server with NVIDIA Drivers
+
+Most cloud images (AWS Deep Learning AMIs, RunPod, Lambda Labs) come with drivers
+pre-installed. Verify:
 
 ```bash
-aws ec2 run-instances \
-  --region us-east-1 \
-  --image-id ami-014135eb43056a305 \
-  --instance-type g6e.xlarge \
-  --key-name <your-key> \
-  --security-group-ids <your-sg> \
-  --subnet-id <your-subnet> \
-  --associate-public-ip-address \
-  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]' \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=llm-gpu-server}]'
+nvidia-smi
+# Should show GPU name and driver version
 ```
 
-**Security group rule needed:**
-
-- Port 22 inbound from your IP only (SSH access — the tunnel rides this)
+If not installed, follow the [NVIDIA CUDA installation guide](https://developer.nvidia.com/cuda-downloads).
 
 ---
 
@@ -75,19 +79,20 @@ cmake -B build -G Ninja -DGGML_CUDA=ON
 cmake --build build --config Release -j $(nproc)
 ```
 
-> This takes ~15 minutes on a g6e.xlarge (4 vCPUs). The CUDA kernel compilation is the bottleneck.
+> This takes ~15 minutes on a 4-core machine — CUDA kernel compilation is the bottleneck.
 
 Verify:
+
 ```bash
 ~/llama.cpp/build/bin/llama-server --version
-# Should show: CUDA device detected — NVIDIA L40S
+# Should mention CUDA support
 ```
 
 ---
 
 ## Step 3 — Start the Model Server
 
-This downloads Qwen 3.5-35B (~22GB) on first run from HuggingFace, then starts serving:
+Downloads Qwen 3.5-35B (~22GB) on first run from HuggingFace, then starts serving:
 
 ```bash
 nohup ~/llama.cpp/build/bin/llama-server \
@@ -114,6 +119,7 @@ nohup ~/llama.cpp/build/bin/llama-server \
 ```
 
 Verify it's running:
+
 ```bash
 curl http://localhost:8131/v1/models
 ```
@@ -125,14 +131,18 @@ curl http://localhost:8131/v1/models
 | `-ngl 999` | Offload all layers to GPU. Without this, inference runs on CPU — ~10x slower. |
 | `--swa-full` | Enables prompt caching for Qwen's sliding window attention. ~10x faster on follow-up turns. |
 | `--no-context-shift` | Required when using `--swa-full`. |
-| `--reasoning off` | Disables Qwen's internal chain-of-thought. Claude Code manages its own reasoning — no need to waste tokens here. |
+| `--reasoning off` | Disables Qwen's internal chain-of-thought — Claude Code manages its own reasoning. |
 | `--mlock` | Locks model weights in RAM, prevents OS from swapping them out. |
-| `--host 127.0.0.1` | Binds to localhost only. Access via SSH tunnel — never expose this port directly. |
+| `--host 127.0.0.1` | Binds to localhost only — access via SSH tunnel, never expose directly. |
 
-**Performance observed on g6e.xlarge (L40S):**
+**Performance observed on L40S (45GB VRAM):**
 - Prompt processing: ~58 tokens/sec
 - Generation: ~117 tokens/sec
-- VRAM used: 24GB of 45GB available
+- VRAM used: ~24GB of 45GB
+
+> **Note:** This setup uses port **8131** (llama.cpp default). The `tunnel.sh` and
+> `claude-local.sh` scripts default to port **11434** (Ollama). If using llama.cpp,
+> update `LOCAL_PORT=8131` in `tunnel.sh` and the port in `claude-local.sh`.
 
 ---
 
@@ -142,20 +152,13 @@ Run this on your local machine:
 
 ```bash
 export G6E_IP=<your-gpu-server-public-ip>
-export G6E_KEY=~/.ssh/<your-key>.pem
+export G6E_KEY=~/.ssh/<your-key>
 
+# If using llama.cpp (port 8131), edit LOCAL_PORT in tunnel.sh first, then:
 ./scripts/tunnel.sh start
-```
 
-Or manually:
-
-```bash
-ssh -o StrictHostKeyChecking=no \
-    -o ServerAliveInterval=60 \
-    -N -f \
-    -L 8131:localhost:8131 \
-    -i ~/.ssh/<your-key>.pem \
-    ubuntu@<gpu-server-public-ip>
+# Or manually:
+ssh -N -f -L 8131:localhost:8131 -i "$G6E_KEY" ubuntu@"$G6E_IP"
 ```
 
 Verify from your machine:
@@ -168,82 +171,63 @@ curl http://localhost:8131/v1/models
 
 ## Step 5 — Run Claude Code
 
-Use the provided script — it temporarily swaps your Claude Code settings to point at the
-local model, then restores your original config when you exit:
-
 ```bash
-./scripts/claude-local.sh
-```
-
-Or manually set the env and run:
-```bash
+# Set env to point at local model and launch
 ANTHROPIC_BASE_URL=http://127.0.0.1:8131 \
 ANTHROPIC_AUTH_TOKEN=local \
 claude
 ```
 
+Or use `claude-local.sh` after updating the port from 11434 to 8131 inside the script.
+
 Confirm it's using Qwen:
+
 ```bash
 claude -p "What model are you?"
-# Hello! I'm Qwen3.5-35B-A3B (unsloth-optimized variant)...
+# Hello! I'm Qwen3.5-35B...
 ```
 
 ---
 
 ## Monitoring GPU Utilization
 
-Run this on the GPU server while sending prompts to see the GPU spike:
+On the GPU server while running prompts:
 
 ```bash
-nvidia-smi --query-gpu=utilization.gpu,utilization.memory,memory.used,temperature.gpu,clocks.current.graphics \
+nvidia-smi --query-gpu=utilization.gpu,utilization.memory,memory.used,temperature.gpu \
   --format=csv --loop=1
 ```
 
-Expected: 0% at idle, spikes to ~80-100% during active inference.
+Expected: 0% at idle, spikes to ~80–100% during active generation.
 
 ---
 
 ## Lessons Learned
 
-### 1. Cloud provider settings in settings.json override shell environment variables
-If your machine uses Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK=1` in `settings.json`),
-passing env var overrides on the command line will not work. The `env` block in
-`settings.json` is applied after shell env vars and wins.
+### 1. `settings.json` overrides shell environment variables
 
-**Fix:** Use `claude-local.sh` — it swaps `settings.json` for the session and restores it on exit.
+If your machine has `CLAUDE_CODE_USE_BEDROCK=1` or `ANTHROPIC_API_KEY` set in
+`~/.claude/settings.json`, passing env vars on the command line will not override them.
+The `env` block in `settings.json` wins.
 
-### 2. llama.cpp CUDA build is slow on small instances
-Expect ~15 minutes on a 4-core instance. The CUDA compiler (`nvcc`) is the bottleneck.
-Consider using `-j $(nproc)` and pre-built binaries for repeated deployments.
+**Fix:** Use `claude-local.sh` which swaps `settings.json` for the duration of the session
+and restores it on exit.
 
-### 3. Model downloads to HuggingFace cache, not llama.cpp cache
+### 2. llama.cpp CUDA build takes time
+
+Expect ~15 minutes on a 4-core machine. Use `-j $(nproc)` to parallelize.
+
+### 3. Model downloads to HuggingFace cache
+
 The `-hf` flag uses HuggingFace Hub. The 22GB GGUF lands in `~/.cache/huggingface/hub/`.
-Plan disk accordingly. First startup is slow; subsequent starts are instant from cache.
+First startup is slow; subsequent starts load from cache instantly.
 
 ### 4. `--reasoning off` replaces the old thinking flag
-The previously documented `--chat-template-kwargs '{"enable_thinking": false}'` is deprecated.
-Use `--reasoning off` for Qwen 3.5.
 
-### 5. SSH tunnel is the right network pattern
-Binding the model server to `0.0.0.0` would work but widens the attack surface unnecessarily.
-An SSH tunnel keeps the model port on localhost and leverages your existing key-based auth.
+The previously documented `--chat-template-kwargs '{"enable_thinking": false}'` is
+deprecated. Use `--reasoning off` for Qwen 3.5.
 
----
+### 5. Always bind to `127.0.0.1`, not `0.0.0.0`
 
-## Cost Reference
-
-| Resource | Rate | Notes |
-|---|---|---|
-| g6e.xlarge on-demand | ~$1.86/hr | 1x NVIDIA L40S, 45GB VRAM |
-| Model download | one-time | ~22GB, free from HuggingFace |
-
-Stop the instance when not in use — model weights are preserved on the EBS volume.
-
----
-
-## Tear Down
-
-```bash
-aws ec2 terminate-instances --region us-east-1 --instance-ids <gpu-instance-id>
-aws ec2 delete-security-group --region us-east-1 --group-id <sg-id>
-```
+The SSH tunnel handles external access. Binding to `0.0.0.0` exposes the model port
+to any network interface — unnecessary and risky.
