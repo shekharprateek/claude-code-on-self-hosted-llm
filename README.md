@@ -11,7 +11,7 @@ Your Laptop or Desktop
   │
   ▼
 Any GPU Server (cloud or on-premise)
-  Open-source model (Qwen 3.5-35B) via llama.cpp
+  Open-source model (Qwen 3.5-35B) via Ollama
   NVIDIA GPU — runs fully offline
 ```
 
@@ -44,21 +44,21 @@ Any NVIDIA GPU with 24GB+ VRAM works. Some options:
 
 Claude Code routes every request to Anthropic's API or Amazon Bedrock by default.
 This guide shows you how to redirect those requests to a local model server running on
-any NVIDIA GPU. The model used here is
-[Qwen 3.5-35B](https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF) — a capable
-open-source coding model that fits in ~24GB of GPU memory.
+any NVIDIA GPU via [Ollama](https://ollama.com). The model used here is
+[Qwen 3.5-35B](https://ollama.com/library/qwen3.5) — a capable open-source coding model
+that fits in ~24GB of GPU memory.
 
-You can swap in any model supported by llama.cpp.
+You can swap in any model supported by Ollama.
 
 ## What's Inside
 
 | File | What it does |
 | --- | --- |
-| [SETUP-GUIDE.md](SETUP-GUIDE.md) | Full walkthrough with every flag explained and troubleshooting tips |
 | [scripts/tunnel.sh](scripts/tunnel.sh) | Opens and closes the secure connection to your GPU server |
 | [scripts/claude-local.sh](scripts/claude-local.sh) | Launches Claude Code against local model, restores original config on exit |
 | [scripts/bench.sh](scripts/bench.sh) | Runs coding tasks against both local model and cloud API for comparison |
 | [config/settings.template.json](config/settings.template.json) | Claude Code configuration template |
+| [SETUP-GUIDE.md](SETUP-GUIDE.md) | Advanced walkthrough using llama.cpp for fine-grained tuning |
 
 ## Quick Start
 
@@ -74,34 +74,28 @@ nvcc --version
 
 If not installed, follow the [CUDA installation guide](https://developer.nvidia.com/cuda-downloads).
 
-### Step 2 — Build the model server
+### Step 2 — Install Ollama and pull the model
 
 ```bash
-sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build git
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
 
-git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp
-cd ~/llama.cpp
-cmake -B build -G Ninja -DGGML_CUDA=ON
-cmake --build build --config Release -j $(nproc)
+# Pull Qwen 3.5-35B (~22GB on first run, requires 24GB+ VRAM)
+ollama pull qwen3.5:35b
+
+# Verify GPU is being used
+ollama run qwen3.5:35b "Reply with: ready"
 ```
 
-Start the model (~22GB downloads on first run):
+For smaller GPUs: `ollama pull qwen3.5:7b`
 
-```bash
-nohup ~/llama.cpp/build/bin/llama-server \
-  -hf unsloth/Qwen3.5-35B-A3B-GGUF:Q4_K_M \
-  --host 127.0.0.1 --port 8131 \
-  -ngl 999 -c 131072 --reasoning off --swa-full --no-context-shift \
-  > /tmp/llama-server.log 2>&1 &
-```
-
-The server is ready when you see `listening on 127.0.0.1:8131`.
+The server is ready at `http://localhost:11434`.
 
 ### Step 3 — Connect from your local machine
 
 ```bash
 export G6E_IP=<your-server-ip>
-export G6E_KEY=~/.ssh/<your-key>
+export G6E_KEY=~/.ssh/<your-key>   # omit if using default ~/.ssh/id_rsa
 ./scripts/tunnel.sh start
 ```
 
@@ -148,9 +142,8 @@ side-by-side timing comparison.
 Full details in [SETUP-GUIDE.md](SETUP-GUIDE.md#lessons-learned):
 
 - If you use Amazon Bedrock with Claude Code, `settings.json` overrides env vars — use `claude-local.sh`
-- llama.cpp CUDA build takes ~15 min on 4-core machines — this is normal
-- Always bind the model server to `127.0.0.1`, not `0.0.0.0` — use the SSH tunnel
-- Use `--reasoning off` for Qwen 3.5 (the older `enable_thinking` flag is deprecated)
+- Ollama binds to `127.0.0.1` by default — good. Never expose it on `0.0.0.0` without a firewall.
+- After `ollama pull`, the model loads on first request — expect a few seconds delay
 
 ## AWS-Specific Version
 
