@@ -13,30 +13,31 @@ The end result: full Claude Code agentic workflows — file edits, bash commands
 reasoning — powered by a model you control, at a fixed hourly cost.
 
 ```
-Your Machine
-  │ SSH
+Your Machine (Mac/Linux)
+  │ SSH tunnel (localhost:8131 → g6e:8131)
   ▼
-EC2 Client (t3.medium)          ── SSH tunnel ──▶   EC2 GPU Server (g6e.xlarge)
-  Claude Code CLI                                    llama-server + Qwen 3.5-35B
-  No cloud API keys needed                           NVIDIA L40S, 45GB VRAM
+EC2 GPU Server (g6e.xlarge)
+  llama-server + Qwen 3.5-35B
+  NVIDIA L40S, 45GB VRAM
 ```
+
+Claude Code runs locally on your machine. The SSH tunnel forwards requests transparently
+to the model server on the GPU instance. No API keys. No cloud routing.
 
 ---
 
 ## Hardware Requirements
 
-### GPU Server
 | Component | Minimum | Used in this guide |
 |---|---|---|
-| Instance | Any GPU instance | g6e.xlarge |
-| GPU | NVIDIA GPU | L40S (48GB VRAM) |
+| Instance | Any NVIDIA GPU instance | g6e.xlarge |
+| GPU | NVIDIA GPU with 24GB+ VRAM | L40S (45GB VRAM) |
 | Disk | 50 GB | 100 GB gp3 |
 | AMI | Deep Learning Base OSS Nvidia (Ubuntu 22.04) | ami-014135eb43056a305 |
 
 > The Deep Learning AMI comes with NVIDIA drivers and CUDA pre-installed — no manual driver setup needed.
 
-### Client Machine
-Any Linux machine with Node.js 18+ works. A t3.medium (~$0.04/hr) is sufficient.
+**Your local machine** just needs Claude Code and SSH — no GPU required.
 
 ---
 
@@ -55,9 +56,9 @@ aws ec2 run-instances \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=llm-gpu-server}]'
 ```
 
-**Security group rules needed:**
-- Port 22 inbound from your IP (SSH access)
-- Port 22 inbound from client EC2 private IP (for SSH tunnel)
+**Security group rule needed:**
+
+- Port 22 inbound from your IP only (SSH access — the tunnel rides this)
 
 ---
 
@@ -135,71 +136,49 @@ curl http://localhost:8131/v1/models
 
 ---
 
-## Step 4 — Set Up the Client EC2
+## Step 4 — Open SSH Tunnel from Your Machine
 
-Launch a t3.medium with Ubuntu 22.04, then:
-
-```bash
-# Install Node.js 22
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Install Claude Code
-sudo npm install -g @anthropic-ai/claude-code
-```
-
-Configure Claude Code to use the local model — create `~/.claude/settings.json`:
-
-```json
-{
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8131",
-    "ANTHROPIC_AUTH_TOKEN": "local",
-    "ANTHROPIC_MODEL": "unsloth/qwen3.5-35b-a3b",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "unsloth/qwen3.5-35b-a3b",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "unsloth/qwen3.5-35b-a3b",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "unsloth/qwen3.5-35b-a3b",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "unsloth/qwen3.5-35b-a3b",
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
-    "DISABLE_PROMPT_CACHING": "1",
-    "DISABLE_AUTOUPDATER": "1",
-    "DISABLE_TELEMETRY": "1",
-    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1"
-  }
-}
-```
-
----
-
-## Step 5 — Open SSH Tunnel from Client to GPU Server
-
-Run this on the client EC2 (copy your key there first):
+Run this on your local machine:
 
 ```bash
-scp -i ~/.ssh/<key>.pem ~/.ssh/<key>.pem ubuntu@<client-ip>:~/.ssh/<key>.pem
-ssh ubuntu@<client-ip> "chmod 600 ~/.ssh/<key>.pem"
+export G6E_IP=<your-gpu-server-public-ip>
+export G6E_KEY=~/.ssh/<your-key>.pem
 
-# Open the tunnel
+./scripts/tunnel.sh start
+```
+
+Or manually:
+
+```bash
 ssh -o StrictHostKeyChecking=no \
     -o ServerAliveInterval=60 \
     -N -f \
     -L 8131:localhost:8131 \
-    -i ~/.ssh/<key>.pem \
-    ubuntu@<gpu-server-private-ip>
+    -i ~/.ssh/<your-key>.pem \
+    ubuntu@<gpu-server-public-ip>
 ```
 
-Verify from the client:
+Verify from your machine:
+
 ```bash
 curl http://localhost:8131/v1/models
 ```
 
 ---
 
-## Step 6 — Run Claude Code
+## Step 5 — Run Claude Code
+
+Use the provided script — it temporarily swaps your Claude Code settings to point at the
+local model, then restores your original config when you exit:
 
 ```bash
-cd ~/your-repo
+./scripts/claude-local.sh
+```
+
+Or manually set the env and run:
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:8131 \
+ANTHROPIC_AUTH_TOKEN=local \
 claude
 ```
 
@@ -226,13 +205,12 @@ Expected: 0% at idle, spikes to ~80-100% during active inference.
 
 ## Lessons Learned
 
-### 1. Cloud provider settings override shell environment variables
+### 1. Cloud provider settings in settings.json override shell environment variables
 If your machine uses Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK=1` in `settings.json`),
 passing env var overrides on the command line will not work. The `env` block in
 `settings.json` is applied after shell env vars and wins.
 
-**Fix:** Use a clean machine with no existing Claude Code config, or swap `settings.json`
-entirely before launching Claude.
+**Fix:** Use `claude-local.sh` — it swaps `settings.json` for the session and restores it on exit.
 
 ### 2. llama.cpp CUDA build is slow on small instances
 Expect ~15 minutes on a 4-core instance. The CUDA compiler (`nvcc`) is the bottleneck.
@@ -246,11 +224,7 @@ Plan disk accordingly. First startup is slow; subsequent starts are instant from
 The previously documented `--chat-template-kwargs '{"enable_thinking": false}'` is deprecated.
 Use `--reasoning off` for Qwen 3.5.
 
-### 5. Same-VPC instances still need explicit security group rules
-Two EC2s in the same VPC cannot reach each other unless the security group has an
-explicit inbound rule for the source private IP. Don't assume VPC locality implies open access.
-
-### 6. SSH tunnel is the right network pattern
+### 5. SSH tunnel is the right network pattern
 Binding the model server to `0.0.0.0` would work but widens the attack surface unnecessarily.
 An SSH tunnel keeps the model port on localhost and leverages your existing key-based auth.
 
@@ -260,17 +234,16 @@ An SSH tunnel keeps the model port on localhost and leverages your existing key-
 
 | Resource | Rate | Notes |
 |---|---|---|
-| g6e.xlarge on-demand | ~$1.86/hr | 1x NVIDIA L40S, 48GB VRAM |
-| t3.medium (client) | ~$0.04/hr | Can use any small instance |
+| g6e.xlarge on-demand | ~$1.86/hr | 1x NVIDIA L40S, 45GB VRAM |
 | Model download | one-time | ~22GB, free from HuggingFace |
+
+Stop the instance when not in use — model weights are preserved on the EBS volume.
 
 ---
 
 ## Tear Down
 
 ```bash
-aws ec2 terminate-instances --region us-east-1 \
-  --instance-ids <gpu-instance-id> <client-instance-id>
-
+aws ec2 terminate-instances --region us-east-1 --instance-ids <gpu-instance-id>
 aws ec2 delete-security-group --region us-east-1 --group-id <sg-id>
 ```
