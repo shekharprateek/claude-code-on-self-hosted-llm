@@ -1,9 +1,8 @@
 # Claude Code with a Self-Hosted Open-Source Model
 
-Use Claude Code — Anthropic's AI coding assistant — powered by an open-source model running
-on your own GPU server, instead of a cloud API. You get full agentic workflows (file edits,
-terminal commands, multi-step reasoning) at a predictable hourly cost, with your code never
-leaving your own infrastructure.
+Run Claude Code — Anthropic's AI coding assistant — backed by an open-source model on
+any GPU server. Works on AWS, GCP, Azure, RunPod, Lambda Labs, or a local workstation.
+No API keys. No per-token costs. Your code never leaves your machine.
 
 ```text
 Your Laptop or Desktop
@@ -11,137 +10,150 @@ Your Laptop or Desktop
   │  SSH tunnel (encrypted, no open ports needed)
   │
   ▼
-GPU Server (cloud or on-premise)
-  Open-source model (Qwen 3.5-35B)
-  NVIDIA GPU, runs fully offline
+Any GPU Server (cloud or on-premise)
+  Open-source model (Qwen 3.5-35B) via llama.cpp
+  NVIDIA GPU — runs fully offline
 ```
 
-## Why Run Your Own Model?
+## Why Self-Host?
 
-| | Cloud API (Anthropic / AWS Bedrock) | Self-Hosted (this guide) |
+| | Cloud API (Anthropic / Bedrock / OpenAI) | Self-Hosted (this guide) |
 | --- | --- | --- |
-| Pricing | Pay per token — adds up fast | Fixed hourly rate (~$1.86/hr on AWS) |
+| Pricing | Pay per token | Fixed cost — server only |
 | Your code stays private | No — sent to external API | Yes — never leaves your server |
-| Choose your model | No | Yes — swap any open-source model |
 | Works offline | No | Yes |
-| Setup time | Under 5 minutes | ~30 minutes (one time) |
+| Choose your model | No | Any open-source model |
+| Rate limits | Yes | None |
 
-Heavy coding sessions with lots of file reads and edits can burn through API credits quickly.
-Once you have a GPU server running, the cost is the same whether you send one request or a thousand.
+Heavy coding sessions with many file reads and edits burn through API credits fast.
+Once a GPU server is running, the cost is the same whether you make one request or a thousand.
+
+## Where to Get a GPU Server
+
+Any NVIDIA GPU with 24GB+ VRAM works. Some options:
+
+| Provider | Option | Approx. Cost |
+| --- | --- | --- |
+| AWS | g6e.xlarge (L40S, 45GB) | ~$1.86/hr |
+| AWS | g5.xlarge (A10G, 24GB) | ~$1.01/hr |
+| RunPod | A40 (48GB) | ~$0.44/hr |
+| Lambda Labs | A100 (40GB) | ~$1.10/hr |
+| Local | Any 24GB+ NVIDIA GPU | Hardware cost only |
 
 ## What Is This?
 
-Claude Code normally routes every request to Anthropic's API or Amazon Bedrock. This guide
-shows you how to redirect those requests to a local model server running on any NVIDIA GPU —
-cloud instance, workstation, or on-premise server. The model used here is
-[Qwen 3.5-35B](https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF), a capable open-source
-coding model that fits in ~24GB of GPU memory.
+Claude Code routes every request to Anthropic's API or Amazon Bedrock by default.
+This guide shows you how to redirect those requests to a local model server running on
+any NVIDIA GPU. The model used here is
+[Qwen 3.5-35B](https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF) — a capable
+open-source coding model that fits in ~24GB of GPU memory.
+
+You can swap in any model supported by llama.cpp.
 
 ## What's Inside
 
 | File | What it does |
 | --- | --- |
 | [SETUP-GUIDE.md](SETUP-GUIDE.md) | Full walkthrough with every flag explained and troubleshooting tips |
-| [scripts/tunnel.sh](scripts/tunnel.sh) | Opens and closes the secure connection between your machine and the GPU server |
-| [scripts/claude-local.sh](scripts/claude-local.sh) | Launches Claude Code pointed at your local model, restores original settings on exit |
-| [scripts/bench.sh](scripts/bench.sh) | Runs the same coding tasks against both the local model and the cloud API for comparison |
-| [config/settings.template.json](config/settings.template.json) | Claude Code configuration template for local model use |
+| [scripts/tunnel.sh](scripts/tunnel.sh) | Opens and closes the secure connection to your GPU server |
+| [scripts/claude-local.sh](scripts/claude-local.sh) | Launches Claude Code against local model, restores original config on exit |
+| [scripts/bench.sh](scripts/bench.sh) | Runs coding tasks against both local model and cloud API for comparison |
+| [config/settings.template.json](config/settings.template.json) | Claude Code configuration template |
 
 ## Quick Start
 
-### Step 1 — Get a GPU server
+### Step 1 — Get a GPU server with NVIDIA drivers and CUDA installed
 
-This guide uses an AWS `g6e.xlarge` instance with an NVIDIA L40S GPU (45GB VRAM).
-Any NVIDIA GPU with 24GB+ VRAM will work — cloud or local.
-
-Launch on AWS with the **Deep Learning Base AMI (Ubuntu 22.04)** — it comes with GPU drivers
-pre-installed so you skip manual CUDA setup.
-
-### Step 2 — Install the model server on the GPU machine
-
-SSH into your GPU server and run:
+On Ubuntu, install CUDA if not already present:
 
 ```bash
-# Download and build llama.cpp (the model server) — takes ~15 min first time
+# Check first — many cloud images have it pre-installed
+nvidia-smi
+nvcc --version
+```
+
+If not installed, follow the [CUDA installation guide](https://developer.nvidia.com/cuda-downloads).
+
+### Step 2 — Build the model server
+
+```bash
+sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build git
+
 git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp
 cd ~/llama.cpp
 cmake -B build -G Ninja -DGGML_CUDA=ON
 cmake --build build --config Release -j $(nproc)
+```
 
-# Start the model — downloads ~22GB from HuggingFace on first run
-~/llama.cpp/build/bin/llama-server \
+Start the model (~22GB downloads on first run):
+
+```bash
+nohup ~/llama.cpp/build/bin/llama-server \
   -hf unsloth/Qwen3.5-35B-A3B-GGUF:Q4_K_M \
   --host 127.0.0.1 --port 8131 \
-  -ngl 999 -c 131072 --reasoning off --swa-full --no-context-shift
+  -ngl 999 -c 131072 --reasoning off --swa-full --no-context-shift \
+  > /tmp/llama-server.log 2>&1 &
 ```
 
 The server is ready when you see `listening on 127.0.0.1:8131`.
 
-### Step 3 — Connect your machine to the GPU server
-
-Run this on your local machine (not the GPU server):
+### Step 3 — Connect from your local machine
 
 ```bash
-export G6E_IP=<your-gpu-server-ip>
+export G6E_IP=<your-server-ip>
+export G6E_KEY=~/.ssh/<your-key>
 ./scripts/tunnel.sh start
 ```
 
-This opens an encrypted SSH tunnel so Claude Code on your machine can reach the model
-server without exposing any ports to the internet.
-
-### Step 4 — Start coding with your local model
+### Step 4 — Run Claude Code
 
 ```bash
 ./scripts/claude-local.sh
 ```
 
-This script temporarily points Claude Code at your local model, then restores your
-original settings when you exit. Your existing Claude Code setup is not permanently changed.
+Or run `/install` inside Claude Code for a guided setup experience.
 
-Confirm it's working:
+Confirm it is working:
 
 ```bash
 claude -p "What model are you?"
 # Hello! I'm Qwen3.5-35B-A3B...
 ```
 
-For the full walkthrough with all configuration options and troubleshooting, see [SETUP-GUIDE.md](SETUP-GUIDE.md).
+See [SETUP-GUIDE.md](SETUP-GUIDE.md) for the full walkthrough with all configuration
+options and troubleshooting tips.
 
 ## Performance
 
-Measured on AWS `g6e.xlarge` (NVIDIA L40S, 45GB VRAM):
+Measured on NVIDIA L40S (45GB VRAM):
 
 - Input processing: ~58 tokens/sec
 - Output generation: ~117 tokens/sec
-- Memory used: ~24GB of 45GB available
+- Memory used: ~24GB of 45GB
 - Context window: up to 131,072 tokens
 
 ## Benchmark
 
-Want to compare quality and speed against the cloud API? Run the included benchmark:
+Compare quality and speed against the cloud API:
 
 ```bash
 ./scripts/bench.sh both
 ```
 
-It runs a set of real coding tasks — from simple lookups to writing full test suites — against
-both your local model and Amazon Bedrock, and prints a side-by-side timing comparison.
+Runs real coding tasks from simple lookups to writing full test suites, and prints a
+side-by-side timing comparison.
 
 ## Common Pitfalls
 
-Full details in [SETUP-GUIDE.md](SETUP-GUIDE.md#lessons-learned), but here are the big ones:
+Full details in [SETUP-GUIDE.md](SETUP-GUIDE.md#lessons-learned):
 
-- If you already use Amazon Bedrock with Claude Code, the `settings.json` config overrides
-  environment variables — use `claude-local.sh` which handles the swap automatically
-- The model server build takes ~15 minutes due to GPU compiler overhead — this is normal
-- Always bind the model server to `127.0.0.1`, never `0.0.0.0` — use the SSH tunnel for remote access
+- If you use Amazon Bedrock with Claude Code, `settings.json` overrides env vars — use `claude-local.sh`
+- llama.cpp CUDA build takes ~15 min on 4-core machines — this is normal
+- Always bind the model server to `127.0.0.1`, not `0.0.0.0` — use the SSH tunnel
 - Use `--reasoning off` for Qwen 3.5 (the older `enable_thinking` flag is deprecated)
 
-## Cost
+## AWS-Specific Version
 
-| What | Cost |
-| --- | --- |
-| GPU server (AWS g6e.xlarge) | ~$1.86/hr on-demand |
-| Model weights | Free download from HuggingFace (~22GB, one time) |
-
-Stop the GPU server when you are not using it — the model stays on disk and reloads in seconds.
+If you are running on Amazon EC2 and want AWS-specific guidance (instance selection,
+CloudWatch monitoring, spot instances, IAM), see the companion repository:
+[claude-code-on-amazon-ec2](https://github.com/shekharprateek/claude-code-on-amazon-ec2).
