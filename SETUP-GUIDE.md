@@ -174,7 +174,7 @@ curl http://localhost:8131/v1/models
 ```bash
 # Set env to point at local model and launch
 ANTHROPIC_BASE_URL=http://127.0.0.1:8131 \
-ANTHROPIC_AUTH_TOKEN=local \
+ANTHROPIC_API_KEY=local \
 claude
 ```
 
