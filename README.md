@@ -86,21 +86,25 @@ If not installed, follow the [CUDA installation guide](https://developer.nvidia.
 
 ### Step 2 — Set up the model server on the GPU server
 
-SSH into the GPU server and run:
+SSH into the GPU server, then choose one of two paths:
+
+**Option A — Script (no dependencies, works on any fresh server):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/shekharprateek/claude-code-on-self-hosted-llm/main/scripts/server-setup.sh | bash
 ```
 
-Or clone and run:
+This installs Ollama, pulls Qwen 3.5-35B (~22GB on first run), and verifies GPU usage.
+For a smaller GPU: `MODEL=qwen3.5:7b bash server-setup.sh`
+
+**Option B — Guided setup via Claude Code (if you have Claude Code installed on the server):**
 
 ```bash
-git clone https://github.com/shekharprateek/claude-code-on-self-hosted-llm
-bash claude-code-on-self-hosted-llm/scripts/server-setup.sh
+npm install -g @anthropic-ai/claude-code
+claude
 ```
 
-This installs Ollama, pulls Qwen 3.5-35B (~22GB on first run), and verifies the model is running on GPU.
-For a smaller GPU: `MODEL=qwen3.5:7b bash server-setup.sh`
+Then type `/install` for an interactive walkthrough.
 
 ### Step 3 — Connect from your local machine
 
