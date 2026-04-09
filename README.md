@@ -1,5 +1,10 @@
 # Claude Code with a Self-Hosted Open-Source Model
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ollama](https://img.shields.io/badge/Ollama-compatible-blue)](https://ollama.com)
+[![Model: Qwen 3.5](https://img.shields.io/badge/Model-Qwen%203.5--35B-orange)](https://ollama.com/library/qwen3.5)
+[![AWS EC2 companion](https://img.shields.io/badge/AWS%20EC2-companion%20repo-orange?logo=amazon-aws)](https://github.com/shekharprateek/claude-code-on-amazon-ec2)
+
 Run Claude Code — Anthropic's AI coding assistant — backed by an open-source model on
 any GPU server. Works on AWS, GCP, Azure, RunPod, Lambda Labs, or a local workstation.
 No API keys. No per-token costs. Your code never leaves your machine.
@@ -14,6 +19,10 @@ Any GPU Server (cloud or on-premise)
   Open-source model (Qwen 3.5-35B) via Ollama
   NVIDIA GPU — runs fully offline
 ```
+
+> **Running on Amazon EC2?** See the AWS-specific companion repo with instance selection,
+> IAM setup, CloudWatch monitoring, and spot instance guidance:
+> **[claude-code-on-amazon-ec2](https://github.com/shekharprateek/claude-code-on-amazon-ec2)**
 
 ## Why Self-Host?
 
@@ -147,6 +156,11 @@ Full details in [SETUP-GUIDE.md](SETUP-GUIDE.md#lessons-learned):
 
 ## AWS-Specific Version
 
-If you are running on Amazon EC2 and want AWS-specific guidance (instance selection,
-CloudWatch monitoring, spot instances, IAM), see the companion repository:
-[claude-code-on-amazon-ec2](https://github.com/shekharprateek/claude-code-on-amazon-ec2).
+Running on Amazon EC2? The companion repo adds AWS-specific guidance: instance selection,
+Deep Learning AMI setup, IAM roles, CloudWatch monitoring, and spot instance teardown.
+
+**[claude-code-on-amazon-ec2](https://github.com/shekharprateek/claude-code-on-amazon-ec2)**
+
+## License
+
+[MIT](LICENSE)
