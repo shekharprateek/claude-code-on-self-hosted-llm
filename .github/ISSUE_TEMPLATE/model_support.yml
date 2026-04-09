@@ -1,0 +1,51 @@
+name: Model Support Request
+description: Request support or share results for a different model
+labels: ["model-support"]
+body:
+  - type: markdown
+    attributes:
+      value: Share your experience running a different model with Claude Code — this helps everyone!
+
+  - type: input
+    id: model
+    attributes:
+      label: Model name
+      placeholder: e.g. mistral:7b, llama3:70b, deepseek-coder:33b
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU model and VRAM
+      placeholder: e.g. RTX 4090 24GB
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Works great
+        - Works with issues
+        - Does not work
+        - Untested — requesting support
+    validations:
+      required: true
+
+  - type: textarea
+    id: performance
+    attributes:
+      label: Performance (if tested)
+      placeholder: |
+        Input tokens/sec:
+        Output tokens/sec:
+        Memory used:
+        Context window:
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / config changes needed
+      placeholder: Any tweaks required to make this model work well with Claude Code?
