@@ -67,6 +67,7 @@ You can swap in any model supported by Ollama.
 | [scripts/tunnel.sh](scripts/tunnel.sh) | Opens and closes the secure SSH tunnel between your machine and the server |
 | [scripts/claude-local.sh](scripts/claude-local.sh) | Launches Claude Code against local model, restores original config on exit |
 | [scripts/bench.sh](scripts/bench.sh) | Benchmarks local model vs cloud API side by side |
+| [BENCHMARK.md](BENCHMARK.md) | Full benchmark guide: tasks, verification, and result interpretation |
 | [config/settings.template.json](config/settings.template.json) | Claude Code configuration template |
 | [SETUP-GUIDE.md](SETUP-GUIDE.md) | Advanced walkthrough using llama.cpp for fine-grained tuning |
 
@@ -144,14 +145,15 @@ Measured on NVIDIA L40S (45GB VRAM):
 
 ## Benchmark
 
-Compare quality and speed against the cloud API:
+Run 9 coding tasks against both backends and compare quality and speed:
 
 ```bash
 ./scripts/bench.sh both
 ```
 
-Runs real coding tasks from simple lookups to writing full test suites, and prints a
-side-by-side timing comparison.
+9 tasks across 3 tiers (simple → medium → complex), each with an automated pass/fail verifier.
+See [BENCHMARK.md](BENCHMARK.md) for the full task descriptions, how verification works,
+and how to read the results.
 
 ## Common Pitfalls
 
