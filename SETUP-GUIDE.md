@@ -13,7 +13,7 @@ The examples below use Ubuntu, but the steps work on any Linux distribution.
 
 ## What This Achieves
 
-Claude Code (the CLI) normally calls Anthropic's API or Amazon Bedrock. This setup replaces
+Claude Code (the CLI) normally calls Anthropic's API or a cloud provider. This setup replaces
 that backend with a self-hosted open-weight model (Qwen 3.5-35B) running on a GPU server
 you control. The end result: full Claude Code agentic workflows — file edits, bash commands,
 multi-step reasoning — powered by a model that never leaves your infrastructure.
@@ -151,14 +151,15 @@ curl http://localhost:8131/v1/models
 Run this on your local machine:
 
 ```bash
-export G6E_IP=<your-gpu-server-public-ip>
-export G6E_KEY=~/.ssh/<your-key>
+export GPU_SERVER_IP=<your-gpu-server-public-ip>
+export SSH_KEY=~/.ssh/<your-key>
+export SSH_USER=ubuntu             # default; use root for RunPod, etc.
 
 # If using llama.cpp (port 8131), edit LOCAL_PORT in tunnel.sh first, then:
 ./scripts/tunnel.sh start
 
 # Or manually:
-ssh -N -f -L 8131:localhost:8131 -i "$G6E_KEY" ubuntu@"$G6E_IP"
+ssh -N -f -L 8131:localhost:8131 -i "$SSH_KEY" ${SSH_USER}@"$GPU_SERVER_IP"
 ```
 
 Verify from your machine:

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# bench.sh — Coding Benchmark: Claude via Bedrock vs self-hosted open-source model
+# bench.sh — Coding Benchmark: cloud Claude API vs self-hosted open-source model
 #
 # Usage:
-#   ./scripts/bench.sh bedrock    # Test A: Claude via Amazon Bedrock
+#   ./scripts/bench.sh cloud      # Test A: Claude via cloud API (Anthropic or Bedrock)
 #   ./scripts/bench.sh local      # Test B: local model via SSH tunnel (default port 11434)
 #   ./scripts/bench.sh both       # Run both back-to-back
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - Claude Code CLI installed (npm install -g @anthropic-ai/claude-code)
-#   - For "bedrock": AWS credentials configured
+#   - For "cloud": Claude Code configured (ANTHROPIC_API_KEY or CLAUDE_CODE_USE_BEDROCK=1)
 #   - For "local": SSH tunnel active on localhost:11434 (see scripts/tunnel.sh)
 #   - python3 and pytest installed
 # ---------------------------------------------------------------------------
@@ -335,17 +335,19 @@ _setup_backend() {
         export ANTHROPIC_API_KEY="local"
         export ANTHROPIC_MODEL="$model_id"
         info "Backend: local model ($model_id) via localhost:${LOCAL_MODEL_PORT}"
-    elif [[ "$backend" == "bedrock" ]]; then
-        unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_API_KEY 2>/dev/null || true
-        export CLAUDE_CODE_USE_BEDROCK=1
-        if ! aws sts get-caller-identity >/dev/null 2>&1; then
-            fail "AWS credentials not configured."
+    elif [[ "$backend" == "cloud" ]]; then
+        # Use whatever cloud provider Claude Code is already configured for:
+        # - Anthropic API: set ANTHROPIC_API_KEY in your environment
+        # - Amazon Bedrock: set CLAUDE_CODE_USE_BEDROCK=1 in your environment
+        unset ANTHROPIC_BASE_URL ANTHROPIC_MODEL 2>/dev/null || true
+        if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && [[ "${CLAUDE_CODE_USE_BEDROCK:-0}" != "1" ]]; then
+            fail "No cloud provider configured. Set ANTHROPIC_API_KEY or CLAUDE_CODE_USE_BEDROCK=1."
         fi
-        local identity
-        identity=$(aws sts get-caller-identity --query 'Arn' --output text 2>/dev/null)
-        info "Backend: Amazon Bedrock (Claude) — $identity"
+        local provider="Anthropic API"
+        [[ "${CLAUDE_CODE_USE_BEDROCK:-0}" == "1" ]] && provider="Amazon Bedrock"
+        info "Backend: cloud Claude ($provider)"
     else
-        fail "Unknown backend: $backend. Use 'bedrock' or 'local'."
+        fail "Unknown backend: $backend. Use 'cloud' or 'local'."
     fi
 }
 
@@ -448,8 +450,7 @@ _run_task() {
             --output-format json \
             --no-session-persistence \
             > "$output_file" 2>"$output_dir/run_${run_num}.stderr" || exit_code=$?
-    elif [[ "$backend" == "bedrock" ]]; then
-        CLAUDE_CODE_USE_BEDROCK=1 \
+    elif [[ "$backend" == "cloud" ]]; then
         claude -p "$prompt" \
             --output-format json \
             --no-session-persistence \
@@ -558,9 +559,9 @@ print(round(sum(vals)/len(vals),2)) if vals else print('-')
 main() {
     local mode="${1:-}"
     if [[ -z "$mode" ]]; then
-        echo "Usage: $0 {bedrock|local|both}"
+        echo "Usage: $0 {cloud|local|both}"
         echo ""
-        echo "  bedrock   — Claude via Amazon Bedrock"
+        echo "  cloud     — Claude via cloud API (set ANTHROPIC_API_KEY or CLAUDE_CODE_USE_BEDROCK=1)"
         echo "  local     — Open-source model via SSH tunnel (localhost:${LOCAL_MODEL_PORT})"
         echo "  both      — Run both and compare"
         echo ""
@@ -576,7 +577,7 @@ main() {
     info "Tasks: ${#TASK_NAMES[@]} x${RUNS} runs"
 
     local backends=()
-    [[ "$mode" == "both" ]] && backends=("bedrock" "local") || backends=("$mode")
+    [[ "$mode" == "both" ]] && backends=("cloud" "local") || backends=("$mode")
 
     for backend in "${backends[@]}"; do
         header "Backend: $backend"
@@ -593,12 +594,12 @@ main() {
     done
 
     if [[ "$mode" == "both" ]]; then
-        header "Comparison: Bedrock vs Local"
-        printf "%-35s %12s %8s %12s %8s\n" "Task" "Bedrock(s)" "B-Pass" "Local(s)" "L-Pass"
-        printf -- "%-35s %12s %8s %12s %8s\n" "----" "----------" "------" "--------" "------"
+        header "Comparison: Cloud vs Local"
+        printf "%-35s %12s %8s %12s %8s\n" "Task" "Cloud(s)" "C-Pass" "Local(s)" "L-Pass"
+        printf -- "%-35s %12s %8s %12s %8s\n" "----" "--------" "------" "--------" "------"
         for task_name in "${TASK_NAMES[@]}"; do
             local avg_b avg_l pass_b pass_l
-            for bk in bedrock local; do
+            for bk in cloud local; do
                 local av pv
                 av=$(python3 -c "
 import json, glob
@@ -612,7 +613,7 @@ files=glob.glob('$RESULTS_DIR/$bk/$task_name/run_*.timing')
 n=sum(1 for f in files if json.load(open(f)).get('verify')=='pass')
 print(f'{n}/$RUNS')
 ")
-                [[ "$bk" == "bedrock" ]] && avg_b="$av" && pass_b="$pv" || true
+                [[ "$bk" == "cloud" ]] && avg_b="$av" && pass_b="$pv" || true
                 [[ "$bk" == "local" ]] && avg_l="$av" && pass_l="$pv" || true
             done
             printf "%-35s %12s %8s %12s %8s\n" "$task_name" "$avg_b" "$pass_b" "$avg_l" "$pass_l"

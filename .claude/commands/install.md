@@ -17,83 +17,53 @@ Run the following and report what is found:
 
 ```bash
 nvidia-smi
-nvcc --version
-cmake --version
-git --version
 ```
 
-If cmake or git are missing, install them:
+### 2. Install Ollama
+
+Check if Ollama is already installed:
 
 ```bash
-sudo apt-get update -qq && sudo apt-get install -y cmake ninja-build git
+which ollama && ollama --version
 ```
 
-### 2. Build llama.cpp with CUDA
-
-Check if `~/llama.cpp/build/bin/llama-server` already exists. If it does, skip the build and report it is already installed.
-
-If not, clone and build:
+If not installed:
 
 ```bash
-git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp
-cd ~/llama.cpp
-cmake -B build -G Ninja -DGGML_CUDA=ON
-cmake --build build --config Release -j $(nproc)
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Verify the build succeeded:
+### 3. Check if model is already pulled
 
 ```bash
-~/llama.cpp/build/bin/llama-server --version
+ollama list
 ```
 
-### 3. Check if model is already downloaded
+Report whether a Qwen model is already present. If not, ask the user:
 
-Check if the Qwen model exists in the HuggingFace cache:
+"Pull Qwen 3.5-35B now? (~22GB download, requires 24GB+ VRAM). For smaller GPUs use qwen3.5:7b. (yes/no)"
+
+If yes, pull the model:
 
 ```bash
-ls ~/.cache/huggingface/hub/ 2>/dev/null
+ollama pull qwen3.5:35b
 ```
 
-Report whether the model is already cached or needs to be downloaded (~22GB on first run).
+For smaller GPUs: `ollama pull qwen3.5:7b`
 
-### 4. Start the model server
-
-Ask the user: "Start the model server now? It will download ~22GB on first run and may take several minutes. (yes/no)"
-
-If yes, start the server:
+### 4. Verify the model is running on GPU
 
 ```bash
-nohup ~/llama.cpp/build/bin/llama-server \
-  -hf unsloth/Qwen3.5-35B-A3B-GGUF:Q4_K_M \
-  --host 127.0.0.1 \
-  --port 8131 \
-  -ngl 999 \
-  -t 2 \
-  -c 131072 \
-  -b 512 \
-  -ub 1024 \
-  --parallel 1 \
-  -fa on \
-  --jinja \
-  --keep 1024 \
-  --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --swa-full \
-  --no-context-shift \
-  --reasoning off \
-  --mlock \
-  --no-mmap \
-  > /tmp/llama-server.log 2>&1 &
+ollama run qwen3.5:35b "Reply with only: ready"
 ```
 
-Wait 10 seconds, then verify the server is responding:
+Then check GPU memory is being used:
 
 ```bash
-curl -s http://localhost:8131/v1/models
+nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv,noheader
 ```
 
-Report the model name from the response and confirm the server is ready.
+Confirm memory shows ~24GB used for the 35B model — this confirms GPU inference is active.
 
 ### 5. Print connection instructions
 
@@ -105,7 +75,7 @@ curl -s ifconfig.me
 
 Tell the user:
 
-"GPU server setup complete. Now run `/install` on your local machine and provide this IP when prompted."
+"GPU server setup complete. Ollama is serving on port 11434. Now run `/install` on your local machine and provide this IP when prompted."
 
 ---
 
@@ -125,75 +95,63 @@ npm install -g @anthropic-ai/claude-code
 
 ### 2. Check SSH key
 
-Ask the user: "What is the path to your SSH key for the GPU server? (e.g. ~/.ssh/my-key.pem)"
+Ask the user: "What is the path to your SSH key for the GPU server? (default: ~/.ssh/id_rsa — press enter to use default)"
 
-Verify the key file exists at the path provided.
+If they provide a path, verify the key file exists. If they press enter, use `~/.ssh/id_rsa`.
 
-### 3. Ask for GPU server IP
+### 3. Ask for SSH username
+
+Ask the user: "What is the SSH username for your GPU server? (default: ubuntu — use root for RunPod, etc.)"
+
+### 4. Ask for GPU server IP
 
 Ask the user: "What is the public IP address of your GPU server?"
 
-Store it as G6E_IP.
-
-### 4. Test SSH connectivity
+### 5. Test SSH connectivity
 
 ```bash
-ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i <key> ubuntu@<G6E_IP> echo "ok"
+ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i <key> <user>@<GPU_SERVER_IP> "ollama list"
 ```
 
 If this fails, report the error and suggest checking:
-- Security group allows port 22 from the current IP
-- The correct username (ubuntu for Deep Learning AMI)
+
+- The server's firewall allows port 22 from the current IP
+- The correct username (ubuntu for most cloud images, root for RunPod)
 - The key file has correct permissions (`chmod 600 <key>`)
 
-### 5. Open SSH tunnel
+### 6. Open SSH tunnel
 
 ```bash
-export G6E_IP=<ip>
-export G6E_KEY=<key>
+export GPU_SERVER_IP=<ip>
+export SSH_KEY=<key>
+export SSH_USER=<user>
 ./scripts/tunnel.sh start
 ```
 
 Verify the tunnel is working:
 
 ```bash
-curl -s http://localhost:8131/v1/models
+curl -s http://localhost:11434/v1/models
 ```
 
 Report the model name from the response.
 
-### 6. Configure Claude Code settings
+### 7. Launch Claude Code with local model
 
-Back up any existing Claude Code settings:
-
-```bash
-cp ~/.claude/settings.json ~/.claude/settings.json.backup 2>/dev/null || true
-```
-
-Copy the template settings:
+Run a quick test to confirm the full chain is working:
 
 ```bash
-cp config/settings.template.json ~/.claude/settings.json
+./scripts/claude-local.sh -p "What model are you running?"
 ```
 
-### 7. Verify end-to-end
-
-Run a quick test:
-
-```bash
-claude -p "Reply with only the words: setup complete"
-```
-
-If the response contains "setup complete", the full chain is working.
+The response should name the open-source model (e.g. qwen3.5:35b), not Claude.
 
 ### 8. Print summary
 
 Print a summary of what was configured:
 
-- GPU server IP
-- SSH tunnel status
-- Model responding at localhost:8131
-- Claude Code settings updated
-
-Tell the user:
-"Setup complete. Run `./scripts/claude-local.sh` to start a Claude Code session backed by your self-hosted model. Your original Claude Code settings have been backed up to ~/.claude/settings.json.backup."
+- GPU server IP and SSH username
+- SSH tunnel status (port 11434)
+- Model responding at localhost:11434
+- How to start a session: `./scripts/claude-local.sh`
+- How to stop the tunnel: `./scripts/tunnel.sh stop`

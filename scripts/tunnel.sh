@@ -10,20 +10,23 @@ set -euo pipefail
 #   ./tunnel.sh status   # Check if tunnel is active
 #
 # Environment variables:
-#   G6E_IP             Required for start — public IP of the GPU server
-#   G6E_KEY            Path to SSH key (default: ~/.ssh/id_rsa)
+#   GPU_SERVER_IP      Required for start — public IP of the GPU server
+#   SSH_KEY            Path to SSH key (default: ~/.ssh/id_rsa)
+#   SSH_USER           SSH username (default: ubuntu — use root for RunPod, etc.)
 #   LOCAL_MODEL_PORT   Local port to forward (default: 11434 for Ollama, 8131 for llama.cpp)
 # ---------------------------------------------------------------------------
 
-G6E_IP="${G6E_IP:-}"
-KEY="${G6E_KEY:-$HOME/.ssh/id_rsa}"
+GPU_SERVER_IP="${GPU_SERVER_IP:-}"
+KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"
+SSH_USER="${SSH_USER:-ubuntu}"
 LOCAL_PORT="${LOCAL_MODEL_PORT:-11434}"
 REMOTE_PORT="${LOCAL_MODEL_PORT:-11434}"
 
-if [[ "${1:-status}" == "start" ]] && [[ -z "$G6E_IP" ]]; then
-    echo "Error: G6E_IP not set. Export it first:"
-    echo "  export G6E_IP=<your-gpu-server-ip>"
-    echo "  export G6E_KEY=<path-to-your-key.pem>  # optional, defaults to ~/.ssh/id_rsa"
+if [[ "${1:-status}" == "start" ]] && [[ -z "$GPU_SERVER_IP" ]]; then
+    echo "Error: GPU_SERVER_IP not set. Export it first:"
+    echo "  export GPU_SERVER_IP=<your-gpu-server-ip>"
+    echo "  export SSH_KEY=<path-to-your-key>        # optional, defaults to ~/.ssh/id_rsa"
+    echo "  export SSH_USER=<ssh-username>            # optional, defaults to ubuntu"
     echo ""
     echo "  For llama.cpp (port 8131): LOCAL_MODEL_PORT=8131 ./tunnel.sh start"
     exit 1
@@ -35,8 +38,8 @@ case "${1:-status}" in
             echo "Port $LOCAL_PORT already in use. Run './tunnel.sh stop' first."
             exit 1
         fi
-        echo "Opening SSH tunnel: localhost:$LOCAL_PORT → $G6E_IP:$REMOTE_PORT"
-        ssh -N -f -L $LOCAL_PORT:localhost:$REMOTE_PORT -i "$KEY" ubuntu@"$G6E_IP"
+        echo "Opening SSH tunnel: localhost:$LOCAL_PORT → $GPU_SERVER_IP:$REMOTE_PORT"
+        ssh -N -f -L $LOCAL_PORT:localhost:$REMOTE_PORT -i "$KEY" ${SSH_USER}@"$GPU_SERVER_IP"
         sleep 2
         if curl -sf http://localhost:$LOCAL_PORT/v1/models >/dev/null 2>&1; then
             echo "Tunnel active. Model reachable at http://localhost:$LOCAL_PORT"

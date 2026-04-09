@@ -51,9 +51,9 @@ Any NVIDIA GPU with 24GB+ VRAM works. Some options:
 
 ## What Is This?
 
-Claude Code routes every request to Anthropic's API or Amazon Bedrock by default.
-This guide shows you how to redirect those requests to a local model server running on
-any NVIDIA GPU via [Ollama](https://ollama.com). The model used here is
+Claude Code routes every request to a cloud API by default. This guide shows you how to
+redirect those requests to a local model server running on any NVIDIA GPU via
+[Ollama](https://ollama.com). The model used here is
 [Qwen 3.5-35B](https://ollama.com/library/qwen3.5) — a capable open-source coding model
 that fits in ~24GB of GPU memory.
 
@@ -63,9 +63,10 @@ You can swap in any model supported by Ollama.
 
 | File | What it does |
 | --- | --- |
-| [scripts/tunnel.sh](scripts/tunnel.sh) | Opens and closes the secure connection to your GPU server |
+| [scripts/server-setup.sh](scripts/server-setup.sh) | One-shot GPU server setup: installs Ollama, pulls model, verifies GPU |
+| [scripts/tunnel.sh](scripts/tunnel.sh) | Opens and closes the secure SSH tunnel between your machine and the server |
 | [scripts/claude-local.sh](scripts/claude-local.sh) | Launches Claude Code against local model, restores original config on exit |
-| [scripts/bench.sh](scripts/bench.sh) | Runs coding tasks against both local model and cloud API for comparison |
+| [scripts/bench.sh](scripts/bench.sh) | Benchmarks local model vs cloud API side by side |
 | [config/settings.template.json](config/settings.template.json) | Claude Code configuration template |
 | [SETUP-GUIDE.md](SETUP-GUIDE.md) | Advanced walkthrough using llama.cpp for fine-grained tuning |
 
@@ -83,28 +84,30 @@ nvcc --version
 
 If not installed, follow the [CUDA installation guide](https://developer.nvidia.com/cuda-downloads).
 
-### Step 2 — Install Ollama and pull the model
+### Step 2 — Set up the model server on the GPU server
+
+SSH into the GPU server and run:
 
 ```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull Qwen 3.5-35B (~22GB on first run, requires 24GB+ VRAM)
-ollama pull qwen3.5:35b
-
-# Verify GPU is being used
-ollama run qwen3.5:35b "Reply with: ready"
+curl -fsSL https://raw.githubusercontent.com/shekharprateek/claude-code-on-self-hosted-llm/main/scripts/server-setup.sh | bash
 ```
 
-For smaller GPUs: `ollama pull qwen3.5:7b`
+Or clone and run:
 
-The server is ready at `http://localhost:11434`.
+```bash
+git clone https://github.com/shekharprateek/claude-code-on-self-hosted-llm
+bash claude-code-on-self-hosted-llm/scripts/server-setup.sh
+```
+
+This installs Ollama, pulls Qwen 3.5-35B (~22GB on first run), and verifies the model is running on GPU.
+For a smaller GPU: `MODEL=qwen3.5:7b bash server-setup.sh`
 
 ### Step 3 — Connect from your local machine
 
 ```bash
-export G6E_IP=<your-server-ip>
-export G6E_KEY=~/.ssh/<your-key>   # omit if using default ~/.ssh/id_rsa
+export GPU_SERVER_IP=<your-server-ip>
+export SSH_KEY=~/.ssh/<your-key>   # omit if using default ~/.ssh/id_rsa
+export SSH_USER=ubuntu             # default; use root for RunPod, etc.
 ./scripts/tunnel.sh start
 ```
 
@@ -120,7 +123,7 @@ Confirm it is working:
 
 ```bash
 claude -p "What model are you?"
-# Hello! I'm Qwen3.5-35B-A3B...
+# Hello! I'm qwen3.5:35b (or whichever model Ollama is serving)...
 ```
 
 See [SETUP-GUIDE.md](SETUP-GUIDE.md) for the full walkthrough with all configuration
@@ -150,7 +153,7 @@ side-by-side timing comparison.
 
 Full details in [SETUP-GUIDE.md](SETUP-GUIDE.md#lessons-learned):
 
-- If you use Amazon Bedrock with Claude Code, `settings.json` overrides env vars — use `claude-local.sh`
+- If you use Amazon Bedrock or another cloud API with Claude Code, `settings.json` overrides env vars — use `claude-local.sh`
 - Ollama binds to `127.0.0.1` by default — good. Never expose it on `0.0.0.0` without a firewall.
 - After `ollama pull`, the model loads on first request — expect a few seconds delay
 
